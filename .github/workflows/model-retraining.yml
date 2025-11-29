@@ -125,7 +125,7 @@ jobs:
         
     - name: Upload best models
       if: steps.check_data.outputs.should_retrain == 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: retrained-models
         path: models/
@@ -133,7 +133,7 @@ jobs:
         
     - name: Upload comparison results
       if: steps.check_data.outputs.should_retrain == 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: configuration-comparison
         path: |
@@ -168,7 +168,7 @@ jobs:
         
     - name: Upload report
       if: steps.check_data.outputs.should_retrain == 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: retraining-report
         path: performance_report.md

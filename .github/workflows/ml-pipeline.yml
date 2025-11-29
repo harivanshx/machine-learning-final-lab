@@ -143,14 +143,14 @@ jobs:
         "
         
     - name: Upload models as artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: trained-models
         path: models/
         retention-days: 30
         
     - name: Upload results as artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: evaluation-results
         path: results/
@@ -158,7 +158,7 @@ jobs:
         
     - name: Upload logs
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: pipeline-logs
         path: pipeline.log
@@ -166,7 +166,7 @@ jobs:
         
     - name: Upload intermediate data
       if: success()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: intermediate-data
         path: intermediate_data/
