@@ -1,0 +1,224 @@
+name: ML Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly on Mondays at 00:00 UTC for model retraining
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      outlier_method:
+        description: 'Outlier treatment method'
+        required: false
+        default: 'cap'
+        type: choice
+        options:
+          - cap
+          - remove
+          - transform
+      test_size:
+        description: 'Test set size (0.0-1.0)'
+        required: false
+        default: '0.2'
+
+jobs:
+  test-pipeline:
+    name: Test ML Pipeline
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Verify data file exists
+      run: |
+        if [ ! -f "Hotel Reservations.csv" ]; then
+          echo "Error: Data file not found!"
+          exit 1
+        fi
+        echo "Data file found: $(wc -l < 'Hotel Reservations.csv') lines"
+        
+    - name: Run data loader tests
+      run: |
+        python data_loader.py
+        echo "✓ Data loader test passed"
+        
+    - name: Run preprocessing tests
+      run: |
+        python preprocess.py
+        echo "✓ Preprocessing test passed"
+        
+    - name: Run feature engineering tests
+      run: |
+        python feature_engineering.py
+        echo "✓ Feature engineering test passed"
+        
+    - name: Run training tests
+      run: |
+        python train.py
+        echo "✓ Training test passed"
+        
+    - name: Run evaluation tests
+      run: |
+        python evaluate.py
+        echo "✓ Evaluation test passed"
+        
+    - name: Run complete pipeline
+      run: |
+        python main.py \
+          --outlier-method ${{ github.event.inputs.outlier_method || 'cap' }} \
+          --test-size ${{ github.event.inputs.test_size || '0.2' }} \
+          --save-intermediate
+        
+    - name: Verify model files created
+      run: |
+        echo "Checking for model files..."
+        if [ ! -d "models" ]; then
+          echo "Error: models directory not created!"
+          exit 1
+        fi
+        
+        required_files=("logistic_regression.pkl" "random_forest.pkl" "xgboost.pkl" "scaler.pkl")
+        for file in "${required_files[@]}"; do
+          if [ ! -f "models/$file" ]; then
+            echo "Error: $file not found!"
+            exit 1
+          fi
+          echo "✓ Found: models/$file ($(du -h models/$file | cut -f1))"
+        done
+        
+    - name: Verify results files created
+      run: |
+        echo "Checking for result files..."
+        if [ ! -d "results" ]; then
+          echo "Error: results directory not created!"
+          exit 1
+        fi
+        
+        required_files=("model_comparison_results.csv" "confusion_matrices.png")
+        for file in "${required_files[@]}"; do
+          if [ ! -f "results/$file" ]; then
+            echo "Error: $file not found!"
+            exit 1
+          fi
+          echo "✓ Found: results/$file"
+        done
+        
+    - name: Check model performance
+      run: |
+        python -c "
+        import pandas as pd
+        import sys
+        
+        # Read results
+        df = pd.read_csv('results/model_comparison_results.csv')
+        
+        # Check minimum accuracy threshold
+        min_accuracy = 0.75
+        best_accuracy = df['Accuracy'].max()
+        
+        print(f'\nModel Performance Summary:')
+        print(df.to_string(index=False))
+        print(f'\nBest Accuracy: {best_accuracy:.4f}')
+        
+        if best_accuracy < min_accuracy:
+            print(f'ERROR: Best accuracy {best_accuracy:.4f} below threshold {min_accuracy}')
+            sys.exit(1)
+        
+        print(f'✓ Performance check passed (threshold: {min_accuracy})')
+        "
+        
+    - name: Upload models as artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: trained-models
+        path: models/
+        retention-days: 30
+        
+    - name: Upload results as artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: evaluation-results
+        path: results/
+        retention-days: 30
+        
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: pipeline-logs
+        path: pipeline.log
+        retention-days: 7
+        
+    - name: Upload intermediate data
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: intermediate-data
+        path: intermediate_data/
+        retention-days: 7
+
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install linting tools
+      run: |
+        pip install flake8 pylint black isort
+        
+    - name: Run flake8
+      continue-on-error: true
+      run: |
+        flake8 *.py --max-line-length=100 --ignore=E501,W503
+        
+    - name: Check code formatting with black
+      continue-on-error: true
+      run: |
+        black --check *.py
+        
+    - name: Check import sorting
+      continue-on-error: true
+      run: |
+        isort --check-only *.py
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [test-pipeline, code-quality]
+    if: always()
+    
+    steps:
+    - name: Pipeline Status
+      run: |
+        if [ "${{ needs.test-pipeline.result }}" == "success" ]; then
+          echo "✅ ML Pipeline executed successfully!"
+          echo "✅ All models trained and verified"
+          echo "✅ Performance thresholds met"
+        else
+          echo "❌ ML Pipeline failed!"
+          echo "Check the logs for details"
+          exit 1
+        fi

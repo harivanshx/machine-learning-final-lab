@@ -192,9 +192,49 @@ Main dependencies:
 - matplotlib
 - seaborn
 
+## CI/CD Integration
+
+This project includes comprehensive CI/CD workflows for automated testing and model retraining.
+
+### GitHub Actions Workflows
+
+**1. ML Pipeline CI/CD** (`.github/workflows/ml-pipeline.yml`)
+- Automated testing on push/PR
+- Weekly scheduled runs
+- Manual trigger with custom parameters
+- Performance validation
+- Artifact upload (models, results, logs)
+
+**2. Model Retraining** (`.github/workflows/model-retraining.yml`)
+- Weekly automated retraining
+- Configuration comparison
+- Best model selection
+- Performance reporting
+
+### Running CI/CD Validation
+
+Test the pipeline before deployment:
+```bash
+python test_pipeline.py
+```
+
+### Documentation
+
+See `CI_CD_GUIDE.md` for detailed CI/CD documentation including:
+- Workflow configuration
+- Manual triggers
+- Performance thresholds
+- Troubleshooting
+- Integration with other platforms
+
 ## Author
 
-Machine Learning Final Lab Project
+Harivansh Bhardwaj
+
+
+## Github 
+
+https://github.com/harivanshx/machine-learning-final-lab
 
 ## License
 

@@ -1,0 +1,175 @@
+name: Model Retraining Schedule
+
+on:
+  schedule:
+    # Retrain models every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: 'Force model retraining'
+        required: false
+        default: 'true'
+
+jobs:
+  retrain-models:
+    name: Automated Model Retraining
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Check for data updates
+      id: check_data
+      run: |
+        # Check if data file has been modified in the last 7 days
+        if [ -f "Hotel Reservations.csv" ]; then
+          file_age=$(( ($(date +%s) - $(stat -c %Y "Hotel Reservations.csv")) / 86400 ))
+          echo "Data file age: $file_age days"
+          
+          if [ $file_age -lt 7 ] || [ "${{ github.event.inputs.force_retrain }}" == "true" ]; then
+            echo "should_retrain=true" >> $GITHUB_OUTPUT
+            echo "Retraining triggered"
+          else
+            echo "should_retrain=false" >> $GITHUB_OUTPUT
+            echo "No recent data updates, skipping retrain"
+          fi
+        else
+          echo "should_retrain=false" >> $GITHUB_OUTPUT
+          echo "Data file not found"
+        fi
+        
+    - name: Run pipeline with multiple configurations
+      if: steps.check_data.outputs.should_retrain == 'true'
+      run: |
+        echo "Running pipeline with different configurations..."
+        
+        # Configuration 1: Default (cap outliers)
+        echo "=== Configuration 1: Cap Outliers ==="
+        python main.py --outlier-method cap --save-models
+        mv models models_cap
+        mv results results_cap
+        
+        # Configuration 2: Remove outliers
+        echo "=== Configuration 2: Remove Outliers ==="
+        python main.py --outlier-method remove --save-models
+        mv models models_remove
+        mv results results_remove
+        
+        # Configuration 3: Transform outliers
+        echo "=== Configuration 3: Transform Outliers ==="
+        python main.py --outlier-method transform --save-models
+        mv models models_transform
+        mv results results_transform
+        
+    - name: Compare configurations
+      if: steps.check_data.outputs.should_retrain == 'true'
+      run: |
+        python -c "
+        import pandas as pd
+        import json
+        
+        configs = ['cap', 'remove', 'transform']
+        all_results = {}
+        
+        for config in configs:
+            df = pd.read_csv(f'results_{config}/model_comparison_results.csv')
+            best_f1 = df['F1-Score'].max()
+            best_model = df.loc[df['F1-Score'].idxmax(), 'Model']
+            all_results[config] = {
+                'best_model': best_model,
+                'best_f1': float(best_f1)
+            }
+        
+        # Find best configuration
+        best_config = max(all_results.items(), key=lambda x: x[1]['best_f1'])
+        
+        print('\n=== Configuration Comparison ===')
+        for config, results in all_results.items():
+            print(f'{config}: {results[\"best_model\"]} (F1={results[\"best_f1\"]:.4f})')
+        
+        print(f'\n✓ Best Configuration: {best_config[0]}')
+        print(f'  Model: {best_config[1][\"best_model\"]}')
+        print(f'  F1-Score: {best_config[1][\"best_f1\"]:.4f}')
+        
+        # Save best configuration
+        with open('best_config.json', 'w') as f:
+            json.dump({
+                'configuration': best_config[0],
+                'results': best_config[1],
+                'timestamp': '$(date -Iseconds)'
+            }, f, indent=2)
+        "
+        
+    - name: Select best models
+      if: steps.check_data.outputs.should_retrain == 'true'
+      run: |
+        best_config=$(python -c "import json; print(json.load(open('best_config.json'))['configuration'])")
+        echo "Using best configuration: $best_config"
+        
+        # Copy best models to final location
+        cp -r models_$best_config models
+        cp -r results_$best_config results
+        
+    - name: Upload best models
+      if: steps.check_data.outputs.should_retrain == 'true'
+      uses: actions/upload-artifact@v3
+      with:
+        name: retrained-models
+        path: models/
+        retention-days: 90
+        
+    - name: Upload comparison results
+      if: steps.check_data.outputs.should_retrain == 'true'
+      uses: actions/upload-artifact@v3
+      with:
+        name: configuration-comparison
+        path: |
+          results_*/
+          best_config.json
+        retention-days: 30
+        
+    - name: Create performance report
+      if: steps.check_data.outputs.should_retrain == 'true'
+      run: |
+        cat > performance_report.md << 'EOF'
+        # Model Retraining Report
+        
+        **Date:** $(date)
+        **Trigger:** ${{ github.event_name }}
+        
+        ## Best Configuration
+        
+        $(cat best_config.json)
+        
+        ## Performance Metrics
+        
+        $(cat results/model_comparison_results.csv)
+        
+        ## Next Steps
+        
+        - Review model performance
+        - Deploy if metrics meet production thresholds
+        - Update model registry
+        
+        EOF
+        
+    - name: Upload report
+      if: steps.check_data.outputs.should_retrain == 'true'
+      uses: actions/upload-artifact@v3
+      with:
+        name: retraining-report
+        path: performance_report.md
+        retention-days: 90
